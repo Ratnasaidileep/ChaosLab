@@ -1,0 +1,131 @@
+pipeline {
+    agent any
+
+    parameters {
+        booleanParam(
+            name: 'RUN_RESILIENCE_CHAOS_TEST',
+            defaultValue: false,
+            description: 'Explicitly trigger controlled resilience testing during pipeline (Never executed by default)'
+        )
+        choice(
+            name: 'CHAOS_TARGET_SERVICE',
+            choices: ['product-service', 'order-service'],
+            description: 'Target microservice for optional resilience stage'
+        )
+    }
+
+    environment {
+        PYTHON_VENV = ".venv"
+        COMPOSE_PROJECT_NAME = "chaoslab-ci"
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                echo 'Checking out source repository...'
+                checkout scm
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                echo 'Setting up Python virtualenv and installing dependencies...'
+                sh '''
+                    python3 -m venv .venv || true
+                    . .venv/bin/activate
+                    pip install --upgrade pip
+                    pip install -r backend/requirements.txt
+                    pip install -r services/product_service/requirements.txt
+                    pip install -r services/order_service/requirements.txt
+                '''
+                echo 'Installing frontend packages...'
+                dir('frontend') {
+                    sh 'npm ci || npm install'
+                }
+            }
+        }
+
+        stage('Backend & Microservices Unit Tests') {
+            steps {
+                echo 'Executing Pytest test suites across all services...'
+                sh '''
+                    . .venv/bin/activate
+                    pytest services/product_service/tests services/order_service/tests backend/tests -v --junitxml=test-results.xml
+                '''
+            }
+            post {
+                always {
+                    junit testResults: 'test-results.xml', allowEmptyResults: true
+                }
+            }
+        }
+
+        stage('Frontend Quality & Build Checks') {
+            steps {
+                echo 'Running TypeScript type checks and Vite build...'
+                dir('frontend') {
+                    sh '''
+                        npm run test
+                        npm run build
+                    '''
+                }
+            }
+        }
+
+        stage('Validate Docker Compose Specification') {
+            steps {
+                echo 'Validating docker-compose.yml syntax and service definitions...'
+                sh 'docker compose config'
+            }
+        }
+
+        stage('Build Docker Images') {
+            steps {
+                echo 'Building production Docker images...'
+                sh 'docker compose build'
+            }
+        }
+
+        stage('Resilience Chaos Verification') {
+            when {
+                expression { return params.RUN_RESILIENCE_CHAOS_TEST == true }
+            }
+            steps {
+                echo "Running explicit controlled chaos experiment against ${params.CHAOS_TARGET_SERVICE}..."
+                sh '''
+                    echo "Spinning up isolated test environment..."
+                    docker compose up -d
+                    echo "Waiting for services to become healthy..."
+                    sleep 10
+
+                    echo "Triggering controlled container failure via ChaosLab API..."
+                    curl -s -X POST http://localhost:8000/api/experiments \
+                      -H "Content-Type: application/json" \
+                      -d "{\\"type\\": \\"container_failure\\", \\"target_service\\": \\"${params.CHAOS_TARGET_SERVICE}\\", \\"duration_seconds\\": 10, \\"confirm_destruction\\": true}"
+
+                    echo "Observing automated recovery..."
+                    sleep 15
+
+                    echo "Verifying service recovery..."
+                    curl -f -s http://localhost:8000/api/services/${params.CHAOS_TARGET_SERVICE}/health
+
+                    echo "Cleaning up test environment..."
+                    docker compose down -v
+                '''
+            }
+        }
+    }
+
+    post {
+        always {
+            echo 'Pipeline execution completed.'
+            cleanWs deleteDirs: true, notFailBuild: true
+        }
+        success {
+            echo 'ChaosLab build, tests, and resilience checks passed successfully!'
+        }
+        failure {
+            echo 'ChaosLab pipeline failed. Check build logs for diagnostic details.'
+        }
+    }
+}
