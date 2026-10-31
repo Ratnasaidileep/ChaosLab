@@ -124,13 +124,21 @@ async def health_check():
             media_type="application/json"
         )
 
+    if chaos_state.active_type in ["cpu", "memory", "latency"]:
+        SERVICE_HEALTH.set(0)
+        return Response(
+            content=f'{{"status": "degraded", "service": "product-service", "reason": "Chaos active: {chaos_state.active_type}", "active_chaos": "{chaos_state.active_type}"}}',
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            media_type="application/json"
+        )
+
     SERVICE_HEALTH.set(1)
     return {
         "status": "healthy",
         "service": "product-service",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "database": "connected",
-        "active_chaos": chaos_state.active_type,
+        "active_chaos": None,
         "metrics": {
             "cpu_percent": psutil.cpu_percent(interval=None),
             "memory_mb": round(psutil.Process().memory_info().rss / (1024 * 1024), 2)

@@ -128,6 +128,14 @@ async def health_check():
             media_type="application/json"
         )
 
+    if chaos_state.active_type in ["cpu", "memory", "latency"]:
+        SERVICE_HEALTH.set(0)
+        return Response(
+            content=f'{{"status": "degraded", "service": "order-service", "reason": "Chaos active: {chaos_state.active_type}", "active_chaos": "{chaos_state.active_type}"}}',
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            media_type="application/json"
+        )
+
     product_service_status = "ok"
     if chaos_state.dependency_failure:
         product_service_status = "injected_failure"
@@ -165,8 +173,9 @@ async def health_check():
     }
 
     if not is_healthy:
+        import json
         return Response(
-            content=str(res_body).replace("'", '"'),
+            content=json.dumps(res_body),
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             media_type="application/json"
         )
