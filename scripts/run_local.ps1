@@ -28,10 +28,12 @@ Write-Host "Backend API:     http://localhost:8000/docs" -ForegroundColor White
 Write-Host "Product Service: http://localhost:8001/products" -ForegroundColor White
 Write-Host "Order Service:   http://localhost:8002/orders" -ForegroundColor White
 Write-Host ""
-Write-Host "ChaosLab is running. Press Ctrl+C to stop all services." -ForegroundColor Gray
+Write-Host "ChaosLab is running. Press Ctrl+C or run .\stop.bat to stop." -ForegroundColor Gray
 
 try {
-    Wait-Process -Id $BackendProcess.Id, $ProductProcess.Id, $OrderProcess.Id
+    while ($true) {
+        Start-Sleep -Seconds 10
+    }
 } finally {
     Write-Host "Terminating background processes..." -ForegroundColor Yellow
     Stop-Process -Id $ProductProcess.Id -ErrorAction SilentlyContinue
